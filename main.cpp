@@ -77,7 +77,8 @@ void * prod_posix(void * d) { // завернуть в функшионал
     for(int k = 0; k < dat->mat_1->ncols; k++) {
         s += dat->mat_1->data[dat->i][k] * dat->mat_2->data[k][dat->j];
     }
-    pthread_exit((void *) s);
+    dat->res_i = s;
+    pthread_exit((void *) &dat->res_i);
 }
 
 template<typename T>
@@ -118,7 +119,7 @@ matrix<T> product_posix(const matrix<T> & mat_1, const matrix<T> & mat_2) {
     for(int i = 0; i < mat_1.nrows; i++) {
         for(int j = 0; j < mat_2.ncols; j++) {
             rc = pthread_join(res[i][j], &status);
-            result.data[i][j] = (T)(status);
+            result.data[i][j] = *(T*)(status);
         }
     }
     delete[]res;
@@ -526,13 +527,13 @@ int main() {
     //mat.print_to_file(&out);   
 
     matrix<int> a(3,5);
-    a.print_to_file(&out);
+    //a.print_to_file(&out);
 
     matrix<int> b(&in);
-    b.print_to_file(&out);
+    //b.print_to_file(&out);
 
     mat = b;
-    mat.print_to_file(&out);
+    //mat.print_to_file(&out);
 /*
     mat = mat+b;
     mat.print_to_file(&out);
@@ -544,7 +545,7 @@ int main() {
     mat.print_to_file(&out);
 */
     matrix<int> c(&in);
-    c.print_to_file(&out);
+    //c.print_to_file(&out);
 
     matrix<int> d;
     d = mat * c;
