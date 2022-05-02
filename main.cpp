@@ -4,6 +4,8 @@
 #include <thread>
 #include <future>
 #include <mutex>
+#include <pthread.h>
+#include <functional>
 
 #define MAX_THREADS 5
 
@@ -49,12 +51,78 @@ public:
 };
 
 template<typename T>
+struct matrix_data {
+    const matrix<T> * mat_1;
+    const matrix<T> * mat_2;
+    int i;
+    int j;
+    matrix<T> * res;
+    int res_i;
+    matrix_data() : mat_1(nullptr), mat_2(nullptr), i(0), j(0), res(nullptr), res_i(0) {}
+};
+
+template<typename T>
 T prod(const matrix<T> & mat_1, const matrix<T> & mat_2, int i, int j) {
     T s = 0;
     for(int k = 0; k < mat_1.ncols; k++) {
         s += mat_1.data[i][k] * mat_2.data[k][j];
     }
     return s;
+}
+
+template<typename T>
+void * prod_posix(void * d) { // завернуть в функшионал
+    matrix_data<int>* dat = static_cast<matrix_data<int>*>(d);
+    int s = 0;
+    for(int k = 0; k < dat->mat_1->ncols; k++) {
+        s += dat->mat_1->data[dat->i][k] * dat->mat_2->data[k][dat->j];
+    }
+    pthread_exit((void *) s);
+}
+
+template<typename T>
+matrix<T> product_posix(const matrix<T> & mat_1, const matrix<T> & mat_2) {
+    if(!(mat_1.ncols == mat_2.nrows)) {
+        cout << "u can't multiply this matrices" << endl;
+        exit(0);
+    }
+    int rc;
+    void * status;
+    pthread_attr_t attr;
+
+    matrix<T> result(mat_1.nrows, mat_2.ncols);
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    pthread_t ** res = new pthread_t*[mat_1.nrows];
+    for(int i = 0; i < mat_1.nrows; i++) { res[i] = new pthread_t[mat_2.ncols]; }
+    
+    //function<void*(void *)> cprod_posix = prod_posix<T>;
+
+    matrix_data<T>* t;
+    t->mat_1 = &mat_1;
+    t->mat_2 = &mat_2;
+
+    for(int i = 0; i < mat_1.nrows; i++) {
+        for(int j = 0; j < mat_2.ncols; j++) {
+            t->i = i;
+            t->j = j;
+            rc = pthread_create(&res[i][j], &attr, prod_posix<T>, (void *)t);
+            if (rc) {
+                printf("ERROR; return code from pthread_create() is %d\n", rc);
+                exit(-1);
+            }
+        }
+    }
+
+    pthread_attr_destroy(&attr);
+    for(int i = 0; i < mat_1.nrows; i++) {
+        for(int j = 0; j < mat_2.ncols; j++) {
+            rc = pthread_join(res[i][j], &status);
+            result.data[i][j] = (T)(status);
+        }
+    }
+    delete[]res;
+    return result;
 }
 
 template<typename T>
@@ -481,7 +549,7 @@ int main() {
     matrix<int> d;
     d = mat * c;
     d.print_to_file(&out);
-    d = product(mat, c);
+    d = product_posix(mat, c);
     d.print_to_file(&out);
 /*
     matrix<int> e(&in);
