@@ -77,8 +77,9 @@ void * prod_posix(void * d) { // завернуть в функшионал
     for(int k = 0; k < dat->mat_1->ncols; k++) {
         s += dat->mat_1->data[dat->i][k] * dat->mat_2->data[k][dat->j];
     }
-    dat->res_i = s;
-    pthread_exit((void *) &dat->res_i);
+    //cout << dat->i << " " << dat->j << " " << s << endl;
+    dat->res->data[dat->i][dat->j] = s;
+    pthread_exit(nullptr);
 }
 
 template<typename T>
@@ -88,7 +89,6 @@ matrix<T> product_posix(const matrix<T> & mat_1, const matrix<T> & mat_2) {
         exit(0);
     }
     int rc;
-    void * status;
     pthread_attr_t attr;
 
     matrix<T> result(mat_1.nrows, mat_2.ncols);
@@ -99,15 +99,20 @@ matrix<T> product_posix(const matrix<T> & mat_1, const matrix<T> & mat_2) {
     
     //function<void*(void *)> cprod_posix = prod_posix<T>;
 
-    matrix_data<T>* t;
-    t->mat_1 = &mat_1;
-    t->mat_2 = &mat_2;
-
+    matrix_data<T> ** a = new matrix_data<T> * [mat_1.nrows];
+    for(int i = 0; i < mat_1.nrows; i++) { 
+        a[i] = new matrix_data<T> [mat_2.ncols]; 
+        for(int j = 0; j < mat_2.ncols; j++) {
+            a[i][j].mat_1 = &mat_1;
+            a[i][j].mat_2 = &mat_2;
+            a[i][j].res = &result;
+        }
+    }
     for(int i = 0; i < mat_1.nrows; i++) {
         for(int j = 0; j < mat_2.ncols; j++) {
-            t->i = i;
-            t->j = j;
-            rc = pthread_create(&res[i][j], &attr, prod_posix<T>, (void *)t);
+            a[i][j].i = i;
+            a[i][j].j = j;
+            rc = pthread_create(&res[i][j], &attr, prod_posix<T>, (void *)&a[i][j]);
             if (rc) {
                 printf("ERROR; return code from pthread_create() is %d\n", rc);
                 exit(-1);
@@ -118,8 +123,8 @@ matrix<T> product_posix(const matrix<T> & mat_1, const matrix<T> & mat_2) {
     pthread_attr_destroy(&attr);
     for(int i = 0; i < mat_1.nrows; i++) {
         for(int j = 0; j < mat_2.ncols; j++) {
-            rc = pthread_join(res[i][j], &status);
-            result.data[i][j] = *(T*)(status);
+            rc = pthread_join(res[i][j], nullptr);
+            //result.data[i][j] = *(T*)(status);
         }
     }
     delete[]res;
@@ -170,6 +175,30 @@ matrix<T> matrix<T>::operator * (const matrix& nmat) {
 }
 
 template<typename T>
+matrix<T> back_posix(matrix<T> & mat) {
+    if(mat.ncols != mat.nrows) {
+        cout << "u can't do it" << endl;
+        exit(0);
+    }
+    int det = mat.det_matrix();
+    if(det == 0) {
+		cout << "u can't do it" << endl;
+        exit(0);
+	}
+	matrix<T> res(mat.ncols,mat.ncols);
+
+    res = mat.transpose_matrix();
+	res = AlgDop_posix(res);
+	for(int i = 0; i < mat.ncols; i++) {
+		for(int j = 0; j < mat.ncols; j++) {
+			res.data[i][j] /= det*1.0;
+		}
+	}
+    
+	return res;  	
+}
+
+template<typename T>
 matrix<T> back(matrix<T> & mat) {
     if(mat.ncols != mat.nrows) {
         cout << "u can't do it" << endl;
@@ -215,6 +244,76 @@ T AlgDop_i(matrix<T> mat, int i, int j) {
         }
     }
     return (pow(-1, i+j) * c.det_matrix());
+}
+
+template<typename T>
+void* AlgDop_i_posix(void* d) {
+    matrix_data<int>* dat = static_cast<matrix_data<int>*>(d);
+    
+    matrix<T> c (dat->mat_1->nrows-1, dat->mat_1->nrows-1);
+    bool flag_k = false;
+    for(int k = 0; k < dat->mat_1->nrows; k++) {
+        bool flag_l = false;
+        for(int l = 0; l < dat->mat_1->nrows; l++) {
+            if(dat->i == k) {
+                flag_k = true;
+                continue;
+            }
+            if(dat->j == l) {
+                flag_l = true;
+                continue;
+            }
+            int new_k, new_l;
+            new_k = flag_k? k-1: k;
+            new_l = flag_l? l-1: l;
+            c.data[new_k][new_l] = dat->mat_1->data[k][l];
+        }
+    }
+    dat->res->data[dat->i][dat->j] = pow(-1, dat->i+dat->j) * c.det_matrix();
+    return (nullptr);
+}
+
+template<typename T>
+matrix<T> AlgDop_posix(matrix<T> mat) {
+	matrix<T> result(mat.nrows,mat.nrows);
+    int rc;
+    pthread_attr_t attr;
+    
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    pthread_t ** res = new pthread_t*[mat.nrows];
+    for(int i = 0; i < mat.nrows; i++) { res[i] = new pthread_t[mat.ncols]; }
+
+    matrix_data<T> ** a = new matrix_data<T> * [mat.nrows];
+    for(int i = 0; i < mat.nrows; i++) { 
+        a[i] = new matrix_data<T> [mat.ncols]; 
+        for(int j = 0; j < mat.ncols; j++) {
+            a[i][j].mat_1 = &mat;
+            a[i][j].res = &result;
+        }
+    }
+
+	for(int i = 0; i < mat.nrows; i++) {
+		for(int j = 0; j < mat.nrows; j++) {
+            a[i][j].i = i;
+            a[i][j].j = j;
+            rc = pthread_create(&res[i][j], &attr, AlgDop_i_posix<T>, (void *)&a[i][j]);
+            if (rc) {
+                printf("ERROR; return code from pthread_create() is %d\n", rc);
+                exit(-1);
+            }
+		}
+	}
+
+    pthread_attr_destroy(&attr);
+    for(int i = 0; i < mat.nrows; i++) {
+        for(int j = 0; j < mat.ncols; j++) {
+            rc = pthread_join(res[i][j], nullptr);
+            //result.data[i][j] = *(T*)(status);
+        }
+    }
+    delete[]res;
+    return result;
 }
 
 template<typename T>
@@ -570,9 +669,10 @@ int main() {
 */
     matrix<int> e(&in);
     matrix<int> r(&in);
+    e = r;
     r = !r;
     r.print_to_file(&out);
-    e = back(r);
+    e = back_posix(e);
     e.print_to_file(&out);
     return 0;
 }
