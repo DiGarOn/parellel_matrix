@@ -5,9 +5,6 @@
 #include <future>
 #include <mutex>
 #include <pthread.h>
-#include <functional>
-
-#define MAX_THREADS 5
 
 using namespace std;
 
