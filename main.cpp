@@ -5,8 +5,11 @@
 #include <future>
 #include <mutex>
 #include <pthread.h>
+#include <cstdlib>
 
 using namespace std;
+
+static int thread_num = 10;
 
 template<typename T>
 class matrix {
@@ -16,6 +19,8 @@ public:
     T ** data;
     void init_from_file(ifstream *); // check
     void print_to_file(ofstream *); // check
+    
+    static matrix init_random(int size);
 
     matrix() : ncols(0), nrows(0) {}; // check
     matrix(size_t, size_t); // check
@@ -46,6 +51,9 @@ public:
     //threads
     friend T prod(const matrix<T> & mat_1, const matrix<T> & mat_2, int i, int j, int l);
 };
+
+void set_threads_num(int n) {thread_num = n;}
+int get_threads_num() {return thread_num;}
 
 template<typename T>
 struct matrix_data {
@@ -105,8 +113,60 @@ matrix<T> product_posix(const matrix<T> & mat_1, const matrix<T> & mat_2) {
             a[i][j].res = &result;
         }
     }
-    for(int i = 0; i < mat_1.nrows; i++) {
-        for(int j = 0; j < mat_2.ncols; j++) {
+
+    int val = mat_1.ncols * mat_1.nrows;
+    int start_i = 0;
+    int start_j = 0;
+
+    while(val >= thread_num) {
+        bool flag = false;
+        int i;
+        int j = start_j;
+        for(i = start_i; i < mat_1.nrows; i++) {
+            while(j < mat_2.ncols) {
+                if(i*mat_1.nrows + j - start_i*mat_1.nrows - start_j + 1 >= thread_num) { 
+                    flag = true; 
+                    break; 
+                }
+                a[i][j].i = i;
+                a[i][j].j = j;
+                rc = pthread_create(&res[i][j], &attr, prod_posix<T>, (void *)&a[i][j]);
+                //cout << i << " " << j << endl;
+                if (rc) {
+                    printf("ERROR; return code from pthread_create() is %d\n", rc);
+                    exit(-1);
+                }
+                j++;
+            }
+            if(flag) break;
+            else j = 0;
+        }
+
+        flag = false;
+        j = start_j;
+
+        pthread_attr_destroy(&attr);
+        for(i = start_i; i < mat_1.nrows; i++) {
+            while(j < mat_2.ncols) {
+                if(i*mat_1.nrows + j - start_i*mat_1.nrows - start_j + 1 >= thread_num) { 
+                    flag = true; 
+                    break; 
+                }
+                rc = pthread_join(res[i][j], nullptr);
+                //result.data[i][j] = *(T*)(status);
+                j++;
+            }
+            if(flag) break;
+            else j = 0;
+        }
+        start_i = i;
+        start_j = j;
+        val -= thread_num;
+    }
+
+    bool flag = false;
+    for(int i = start_i; i < mat_1.nrows; i++) {
+        for(int j = start_j; j < mat_2.ncols; j++) {
             a[i][j].i = i;
             a[i][j].j = j;
             rc = pthread_create(&res[i][j], &attr, prod_posix<T>, (void *)&a[i][j]);
@@ -117,13 +177,14 @@ matrix<T> product_posix(const matrix<T> & mat_1, const matrix<T> & mat_2) {
         }
     }
 
-    pthread_attr_destroy(&attr);
-    for(int i = 0; i < mat_1.nrows; i++) {
-        for(int j = 0; j < mat_2.ncols; j++) {
+    int i;
+    int j;
+    for(i = start_i; i < mat_1.nrows; i++) {
+        for(j = start_j; j < mat_2.ncols; j++) {
             rc = pthread_join(res[i][j], nullptr);
-            //result.data[i][j] = *(T*)(status);
         }
     }
+
     delete[]res;
     return result;
 }
@@ -135,18 +196,148 @@ matrix<T> product(const matrix<T> & mat_1, const matrix<T> & mat_2) {
         exit(0);
     }
     matrix<T> result(mat_1.nrows, mat_2.ncols);
-    future<T> **res = new future<T>*[mat_1.nrows];
-    for(int i = 0; i < mat_1.nrows; i++) { res[i] = new future<T>[mat_2.ncols]; }
-    for(int i = 0; i < mat_1.nrows; i++) {
-        for(int j = 0; j < mat_2.ncols; j++) {
+
+    int val = mat_1.ncols * mat_1.nrows;
+    int start_i = 0;
+    int start_j = 0;
+
+    future<T>**res = new future<T>*[mat_1.nrows];
+    for(int i = 0; i < mat_1.nrows; i++) {res[i] = new future<T>[mat_2.ncols];}
+
+    while (val >= thread_num) {
+        bool flag = false;
+        int i;
+        int j = start_j;
+        for(i = start_i; i < mat_1.nrows; i++) {
+            while(j < mat_2.ncols) {
+                if(i*mat_1.nrows + j - start_i*mat_1.nrows - start_j + 1 > thread_num) { 
+                    flag = true; 
+                    break; 
+                }
+                res[i][j] = async(prod<T>, mat_1, mat_2, i, j);//!!!
+                j++;
+            }
+            if(flag) break;
+            else j = 0;
+        }
+        flag = false;
+        j = start_j;
+        for(i = start_i; i < mat_1.nrows; i++) {
+            while(j < mat_2.ncols) {
+                if(i*mat_1.nrows + j - start_i*mat_1.nrows - start_j + 1 > thread_num) { 
+                    flag = true; 
+                    break; 
+                }
+                result.data[i][j] = res[i][j].get();
+                j++;
+            }
+            if(flag) break;
+            else j = 0;
+        }
+        start_i = i;
+        start_j = j;
+        val -= thread_num;
+    }
+
+    bool flag = false;
+    for(int i = start_i; i < mat_1.nrows; i++) {
+        for(int j = start_j; j < mat_2.ncols; j++) {
             res[i][j] = async(prod<T>, mat_1, mat_2, i, j);//!!!
         }
     }
-    for(int i = 0; i < mat_1.nrows; i++) {
-        for(int j = 0; j < mat_2.ncols; j++) {
+
+    int i;
+    int j;
+    for(i = start_i; i < mat_1.nrows; i++) {
+        for(j = start_j; j < mat_2.ncols; j++) {
             result.data[i][j] = res[i][j].get();
         }
     }
+    delete[]res;
+    return result;
+}
+
+template<typename T>
+T AlgDop_i(matrix<T> mat, int i, int j) {
+    matrix<T> c (mat.nrows-1, mat.nrows-1);
+    bool flag_k = false;
+    for(int k = 0; k < mat.nrows; k++) {
+        bool flag_l = false;
+        for(int l = 0; l < mat.nrows; l++) {
+            if(i == k) {
+                flag_k = true;
+                continue;
+            }
+            if(j == l) {
+                flag_l = true;
+                continue;
+            }
+            int new_k, new_l;
+            new_k = flag_k? k-1: k;
+            new_l = flag_l? l-1: l;
+            c.data[new_k][new_l] = mat.data[k][l];
+        }
+    }
+    return (pow(-1, i+j) * c.det_matrix());
+}
+
+template<typename T>
+matrix<T> AlgDop(matrix<T> mat) {
+	matrix<T> result(mat.nrows,mat.nrows);
+    future<T> **res = new future<T>*[mat.nrows];
+    for(int i = 0; i < mat.nrows; i++) { res[i] = new future<T>[mat.ncols]; }
+
+    int val = mat.ncols * mat.nrows;
+    int start_i = 0;
+    int start_j = 0;
+
+    while(val >= thread_num) { 
+        bool flag = false;
+        int i;
+        int j = start_j;   
+        for(i = start_i; i < mat.nrows; i++) {
+            while(j < mat.ncols) {
+                if(i*mat.nrows + j - start_i*mat.nrows - start_j + 1 > thread_num) { 
+                    flag = true; 
+                    break; 
+                }
+                res[i][j] = async(AlgDop_i<T>, mat, i, j);//!!!
+                j++;
+            }
+            if(flag) break;
+            else j = 0;
+        }
+        flag = false;
+        j = start_j;
+        for(int i = 0; i < mat.nrows; i++) {
+            while(j < mat.ncols) {
+                if(i*mat.nrows + j - start_i*mat.nrows - start_j + 1 > thread_num) { 
+                    flag = true; 
+                    break; 
+                }
+                result.data[i][j] = res[i][j].get();
+                j++;
+            }
+            if(flag) break;
+            else j = 0;
+        }
+    }
+
+    bool flag = false;
+    for(int i = start_i; i < mat.nrows; i++) {
+        for(int j = start_j; j < mat.ncols; j++) {
+            res[i][j] = async(AlgDop_i<T>, mat, i, j);//!!!
+        }
+    }
+
+    int i;
+    int j;
+    for(i = start_i; i < mat.nrows; i++) {
+        for(j = start_j; j < mat.ncols; j++) {
+            result.data[i][j] = res[i][j].get();
+        }
+    }
+
     delete[]res;
     return result;
 }
@@ -197,19 +388,22 @@ matrix<T> back_posix(matrix<T> & mat) {
 
 template<typename T>
 matrix<T> back(matrix<T> & mat) {
+    cout << "here";
     if(mat.ncols != mat.nrows) {
         cout << "u can't do it" << endl;
         exit(0);
     }
+    cout << "here";
     int det = mat.det_matrix();
     if(det == 0) {
 		cout << "u can't do it" << endl;
         exit(0);
 	}
 	matrix<T> res(mat.ncols,mat.ncols);
-
+    cout << "here";
     res = mat.transpose_matrix();
 	res = AlgDop(res);
+    cout << "here";
 	for(int i = 0; i < mat.ncols; i++) {
 		for(int j = 0; j < mat.ncols; j++) {
 			res.data[i][j] /= det*1.0;
@@ -217,30 +411,6 @@ matrix<T> back(matrix<T> & mat) {
 	}
     
 	return res;  	
-}
-
-template<typename T>
-T AlgDop_i(matrix<T> mat, int i, int j) {
-    matrix<T> c (mat.nrows-1, mat.nrows-1);
-    bool flag_k = false;
-    for(int k = 0; k < mat.nrows; k++) {
-        bool flag_l = false;
-        for(int l = 0; l < mat.nrows; l++) {
-            if(i == k) {
-                flag_k = true;
-                continue;
-            }
-            if(j == l) {
-                flag_l = true;
-                continue;
-            }
-            int new_k, new_l;
-            new_k = flag_k? k-1: k;
-            new_l = flag_l? l-1: l;
-            c.data[new_k][new_l] = mat.data[k][l];
-        }
-    }
-    return (pow(-1, i+j) * c.det_matrix());
 }
 
 template<typename T>
@@ -307,25 +477,6 @@ matrix<T> AlgDop_posix(matrix<T> mat) {
         for(int j = 0; j < mat.ncols; j++) {
             rc = pthread_join(res[i][j], nullptr);
             //result.data[i][j] = *(T*)(status);
-        }
-    }
-    delete[]res;
-    return result;
-}
-
-template<typename T>
-matrix<T> AlgDop(matrix<T> mat) {
-	matrix<T> result(mat.nrows,mat.nrows);
-    future<T> **res = new future<T>*[mat.nrows];
-    for(int i = 0; i < mat.nrows; i++) { res[i] = new future<T>[mat.ncols]; }
-	for(int i = 0; i < mat.nrows; i++) {
-		for(int j = 0; j < mat.nrows; j++) {
-            res[i][j] = std::async(AlgDop_i<T>, mat, i, j);//!!!
-		}
-	}
-    for(int i = 0; i < mat.nrows; i++) {
-        for(int j = 0; j < mat.ncols; j++) {
-            result.data[i][j] = res[i][j].get();
         }
     }
     delete[]res;
@@ -524,6 +675,17 @@ matrix<T> matrix<T>::init_zero(int num) {
 }
 
 template<typename T>
+matrix<T> matrix<T>::init_random(int size) {
+    matrix<T> res(size, size);
+    for(int i = 0; i < size; i++) {
+        for(int j = 0; j < size; j++) {
+            res.data[i][j] = rand();
+        }
+    } 
+    return res;
+}
+
+template<typename T>
 matrix<T> matrix<T>::init_single(int num) {
     matrix<T> res(num,num);
     for(int i = 0; i < num; i++) {
@@ -603,7 +765,9 @@ matrix<T> matrix<T>::transpose_matrix() {
 	return c;	
 }
 
-int main() {
+
+// int main() {
+/*
     ifstream in;
 	in.open("input.txt");
 	if(!(in.is_open())){
@@ -618,19 +782,26 @@ int main() {
 		exit(0);
 	}
 
-    matrix<int> mat;
+    matrix<int> mat_1, mat_2;
+    mat_1 = matrix<int>::init_random(5);
+    mat_2 = mat_1;
+    mat_1.print_to_file(&out);
+    mat_2.print_to_file(&out);
+
+
+    //matrix<int> mat;
     //mat.init_from_file(&in);
     //mat.print_to_file(&out);   
 
-    matrix<int> a(3,5);
+    //matrix<int> a(3,5);
     //a.print_to_file(&out);
 
-    matrix<int> b(&in);
+    //matrix<int> b(&in);
     //b.print_to_file(&out);
 
-    mat = b;
+    //mat = b;
     //mat.print_to_file(&out);
-/*
+
     mat = mat+b;
     mat.print_to_file(&out);
 
@@ -639,16 +810,19 @@ int main() {
 
     mat = mat*3;
     mat.print_to_file(&out);
-*/
-    matrix<int> c(&in);
+
+    //matrix<int> c(&in);
     //c.print_to_file(&out);
 
-    matrix<int> d;
-    d = mat * c;
-    d.print_to_file(&out);
-    d = product_posix(mat, c);
-    d.print_to_file(&out);
-/*
+    // matrix<int> d;
+    // out << endl << "production" << endl << endl;
+    // d = mat * c;
+    // d.print_to_file(&out);
+    // d = product(mat, c);
+    // d.print_to_file(&out);
+    // d = product_posix(mat, c);
+    // d.print_to_file(&out);
+
     matrix<int> e(&in);
     e.print_to_file(&out);
 
@@ -657,19 +831,22 @@ int main() {
 
     e = matrix<int>::init_single(2);
     e.print_to_file(&out);
-
-    matrix<int> e(&in);
-    e = matrix<int>::init_single(4);
-    //e = !e;
-    e = back(e);
-    e.print_to_file(&out);
 */
-    matrix<int> e(&in);
-    matrix<int> r(&in);
-    e = r;
-    r = !r;
-    r.print_to_file(&out);
-    e = back_posix(e);
-    e.print_to_file(&out);
-    return 0;
-}
+    // matrix<int> e = matrix<int>::init_single(4);
+    //e = !e;
+    // e = back(e);
+    //e.print_to_file(&out);
+
+    // matrix<int> e(&in);
+    // matrix<int> r(&in);
+    // out << endl << "back" << endl << endl;
+    // e = r;
+    // d = r;
+    // r = !r;
+    // r.print_to_file(&out);
+    // d = back(d);
+    // d.print_to_file(&out);
+    // e = back_posix(e);
+    // e.print_to_file(&out);
+    // return 0;
+// }

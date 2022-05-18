@@ -30,6 +30,7 @@
   "files.associations": {
     "fstream": "cpp",
     "iostream": "cpp",
-    "future": "cpp"
+    "future": "cpp",
+    "chrono": "cpp"
   }
 }
