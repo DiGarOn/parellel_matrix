@@ -29,7 +29,7 @@ int main() {
 
     set_threads_num(16);
     out << "\nconst thread_num\n";
-    for(int i = 50; i < 100; i++) {
+    for(int i = 1; i < 50; i++) {
         mat_1 = matrix<int>::init_random(i);
         mat_2 = matrix<int>::init_random(i);
  

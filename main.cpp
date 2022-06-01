@@ -6,6 +6,7 @@
 #include <mutex>
 #include <pthread.h>
 #include <cstdlib>
+#include <initializer_list>
 
 using namespace std;
 
@@ -14,8 +15,8 @@ static int thread_num = 10;
 template<typename T>
 class matrix {
 public:
-    size_t ncols;
-    size_t nrows;
+    int ncols;
+    int nrows;
     T ** data;
     void init_from_file(ifstream *); // check
     void print_to_file(ofstream *); // check
@@ -25,6 +26,9 @@ public:
     matrix() : ncols(0), nrows(0) {}; // check
     matrix(size_t, size_t); // check
     matrix(ifstream *); // check
+    matrix(const matrix<T> &);
+    matrix(matrix<T> &&);
+    matrix(initializer_list<tuple<int, int, T>>);
 
     matrix operator * (const matrix&); // check + by async
     matrix operator * (int); // check
@@ -44,6 +48,7 @@ public:
     bool operator != (int); // check
 
     matrix& operator = (const matrix&); // check
+    matrix& operator = (matrix &&);
 
     static matrix init_zero(int); // check
     static matrix init_single(int); // check
@@ -561,7 +566,7 @@ matrix<T>::matrix(size_t rows, size_t cols) : nrows(rows), ncols(cols) {
 template<typename T>
 matrix<T>::matrix(ifstream * in) {
     init_from_file(in);
-}
+} 
 
 template<typename T>
 matrix<T>& matrix<T>::operator = (const matrix& nmat) {
@@ -577,6 +582,37 @@ matrix<T>& matrix<T>::operator = (const matrix& nmat) {
     return *this;
 }
 
+template<typename T>
+matrix<T>& matrix<T>::operator = (matrix && nmat) {
+    ncols = nmat.ncols;
+    nrows = nmat.nrows;
+    data = nmat.data;
+    nmat.ncols = 0;
+    nmat.nrows = 0;
+    nmat.data = nullptr;
+    return *this;
+}
+
+template<typename T>
+matrix<T>::matrix(const matrix<T> & nmat) {
+    ncols = nmat.ncols;
+    nrows = nmat.nrows;
+    data = new T*[nrows];
+    for(int i = 0; i < nrows; i++) {
+        data[i] = new T[ncols]; 
+        for(int j = 0; j < ncols; j++) {
+            data[i][j] = nmat.data[i][j];
+        }
+    }
+}
+
+
+template<typename T>
+matrix<T>::matrix(matrix<T> && nmat) : ncols(nmat.ncols), nrows(nmat.nrows), data(nmat.data) {
+    nmat.ncols = 0;
+    nmat.nrows = 0;
+    nmat.data = nullptr;
+}
 
 template<typename T>
 matrix<T> matrix<T>::operator + (const matrix& nmat) {
@@ -765,9 +801,27 @@ matrix<T> matrix<T>::transpose_matrix() {
 	return c;	
 }
 
+//________________________________________________________________________________________________________
+template<typename T>
+matrix<T>::matrix(initializer_list<tuple<int, int, T>> l) {
+    int rows, cols;
+    rows = cols = 0; 
+    for(auto i : l) {
+        if(rows < get<0>(i)) rows = get<0>(i);
+        if(cols < get<1>(i)) cols = get<0>(i);
+    }
+    nrows = rows + 1;
+    ncols = cols + 1;
+    data = new T*[rows];
+    for(int i = 0; i < nrows; i++) {
+        data[i] = new T[ncols];
+    }   
+    for(auto i : l) {
+        data[get<0>(i)][get<1>(i)] = get<2>(i);
+    }
+}
 
-// int main() {
-/*
+ int main() {
     ifstream in;
 	in.open("input.txt");
 	if(!(in.is_open())){
@@ -782,71 +836,9 @@ matrix<T> matrix<T>::transpose_matrix() {
 		exit(0);
 	}
 
-    matrix<int> mat_1, mat_2;
-    mat_1 = matrix<int>::init_random(5);
-    mat_2 = mat_1;
+    matrix<int> mat_1 {make_tuple<int, int, int>(0,0,1), make_tuple<int, int, int>(0,1,2),
+                        make_tuple<int, int, int>(1,0,3), make_tuple<int, int, int>(1,1,4)};
     mat_1.print_to_file(&out);
-    mat_2.print_to_file(&out);
 
-
-    //matrix<int> mat;
-    //mat.init_from_file(&in);
-    //mat.print_to_file(&out);   
-
-    //matrix<int> a(3,5);
-    //a.print_to_file(&out);
-
-    //matrix<int> b(&in);
-    //b.print_to_file(&out);
-
-    //mat = b;
-    //mat.print_to_file(&out);
-
-    mat = mat+b;
-    mat.print_to_file(&out);
-
-    mat = mat - b;
-    mat.print_to_file(&out);
-
-    mat = mat*3;
-    mat.print_to_file(&out);
-
-    //matrix<int> c(&in);
-    //c.print_to_file(&out);
-
-    // matrix<int> d;
-    // out << endl << "production" << endl << endl;
-    // d = mat * c;
-    // d.print_to_file(&out);
-    // d = product(mat, c);
-    // d.print_to_file(&out);
-    // d = product_posix(mat, c);
-    // d.print_to_file(&out);
-
-    matrix<int> e(&in);
-    e.print_to_file(&out);
-
-    e = matrix<int>::init_zero(2);
-    e.print_to_file(&out);
-
-    e = matrix<int>::init_single(2);
-    e.print_to_file(&out);
-*/
-    // matrix<int> e = matrix<int>::init_single(4);
-    //e = !e;
-    // e = back(e);
-    //e.print_to_file(&out);
-
-    // matrix<int> e(&in);
-    // matrix<int> r(&in);
-    // out << endl << "back" << endl << endl;
-    // e = r;
-    // d = r;
-    // r = !r;
-    // r.print_to_file(&out);
-    // d = back(d);
-    // d.print_to_file(&out);
-    // e = back_posix(e);
-    // e.print_to_file(&out);
-    // return 0;
-// }
+    return 0;
+}
